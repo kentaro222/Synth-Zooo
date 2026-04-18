@@ -46,12 +46,10 @@ let tileImages = [];
 let comboTextTimer = 0;
 let finalComboCount = 0;
 let finalComboTimer = 0;
+let chainGraceTimer = -1; 
 
 let messageTimer = 0;
 let messageText = "NO MORE MOVES!";
-
-// ★追加：アクティブ連鎖の猶予フレーム用タイマー
-let chainGraceTimer = -1; 
 
 // --- Synthwave用変数 ---
 let synthHue = 280;
@@ -81,7 +79,8 @@ function setup() {
     textFont('DotGothic16');
     noSmooth(); 
 
-    for(let i = 0; i < 30; i++) {
+    // ★軽量化: 星の数を20個に削減
+    for(let i = 0; i < 20; i++) {
         synthStars.push({
             x: Math.random() * width,
             y: Math.random() * (UI_HEIGHT * 0.65), 
@@ -112,11 +111,11 @@ function setup() {
 
 function draw() {
     background(0);
-
     updateLogic();
 
     let groundY = UI_HEIGHT * 0.65; 
 
+    // --- 1. 空と星 ---
     synthHue = (synthHue + 0.1) % 360;
     synthScrollX += 1.2;
     let skyGrad = drawingContext.createLinearGradient(0, 0, 0, groundY);
@@ -132,6 +131,7 @@ function draw() {
         rect(Math.floor(s.x), Math.floor(s.y), s.size, s.size);
     }
 
+    // --- 2. 山 ---
     fill((synthHue + 20) % 360, 50, 8); noStroke();
     for (let i = 0; i < 4; i++) {
         let loopWidth = width + 300;
@@ -139,13 +139,17 @@ function draw() {
         triangle(mx, groundY, mx + 150, groundY - 60, mx + 300, groundY);
     }
 
+    // --- 3. 花火 ---
+    // ★軽量化: 重い clip() 処理を完全削除。
+    // その代わり、この後に描画する「地面の黒い四角」で隠すというトリックを利用
     for (let i = fireworks.length - 1; i >= 0; i--) {
         fireworks[i].update();
         fireworks[i].draw();
         if (fireworks[i].isDead) fireworks.splice(i, 1);
     }
 
-    fill(0);
+    // --- 4. 地面とグリッド ---
+    fill(0); // これが花火の根元を隠す自然な目隠しになる
     rect(0, groundY, width, UI_HEIGHT - groundY);
 
     stroke(synthHue, 100, 50);
@@ -163,19 +167,19 @@ function draw() {
     }
     drawingContext.globalAlpha = 1.0;
 
+    // --- 5. キャラクター ---
     if (isPlayerReady) {
         let sx = (Math.floor(frameCount / 15) % 2 ? 16 : 0);
         let pSize = 48; 
-        
         drawingContext.save();
         drawingContext.translate(width * 0.2, groundY);
-        drawingContext.scale(1, 1); 
         drawingContext.drawImage(playerImage, sx, 0, 16, 16, -pSize/2, -pSize/2, pSize, pSize);
         drawingContext.restore();
     }
 
     drawUI();
 
+    // --- 6. パズル盤面 ---
     push();
     translate(0, UI_HEIGHT);
     
@@ -193,7 +197,6 @@ function draw() {
         fill(0, 0, 0, 0.8);
         noStroke();
         rect(0, (ROWS * tileSize)/2 - 40, width, 80);
-        
         fill(0, 80, 100); 
         stroke(0); strokeWeight(4);
         textAlign(CENTER, CENTER);
@@ -208,7 +211,6 @@ function draw() {
 
 function drawUI() {
     textAlign(LEFT, TOP); noStroke();
-    
     fill(0, 0, 100); textSize(12); text("SCORE", 15, 10);
     fill(0, 0, 100); textSize(20); text(score.toLocaleString(), 15, 25);
 
@@ -230,7 +232,6 @@ function drawUI() {
 }
 
 // --- パズルロジック ---
-
 function updateLogic() {
     let isBusy = false;
 
@@ -284,17 +285,13 @@ function updateLogic() {
 
     findMatches();
 
-    // ★ 変更点：連鎖・手詰まりの判定ロジック（猶予フレーム導入）
     if (!isBusy && !checkMatchesOnBoard() && pendingFireworks.length === 0) {
         if (comboCount > 0) {
             if (chainGraceTimer === -1) {
-                // 盤面が静止した瞬間に、30フレームの猶予タイマーをセット
-                chainGraceTimer = 30;
+                chainGraceTimer = 10;
             } else if (chainGraceTimer > 0) {
-                // 猶予期間中
                 chainGraceTimer--;
             } else if (chainGraceTimer === 0) {
-                // 30フレーム経過しても何もしなかった場合、連鎖確定
                 handleFinalFirework();
                 finalComboCount = comboCount;
                 finalComboTimer = 120;
@@ -306,7 +303,6 @@ function updateLogic() {
             messageTimer = 120; 
         }
     } else {
-        // 落下中や消滅中、または新しいマッチを発見した場合はタイマーをリセットして連鎖継続
         chainGraceTimer = -1;
     }
 }
@@ -348,7 +344,6 @@ function findMatches() {
             comboCount++;
             comboTextTimer = 60;
             finalComboTimer = 0;
-            
             if (comboCount === 1) lastMatchType = matches[0].type;
             if (comboCount % 3 === 2) {
                 pendingFireworks.push({ timer: MATCH_FRAME, combo: comboCount });
@@ -376,17 +371,12 @@ function testMove(r1, c1, r2, c2) {
     return result;
 }
 
-// --- 花火制御 ---
-
 function handleFinalFirework() {
     if (comboCount === 1) {
         launchHanabi(1, lastMatchType, false);
     } else if (comboCount % 3 !== 2) {
-        if (comboCount >= 6) {
-            launchHanabi(5, 0, true);
-        } else {
-            launchHanabi(3, 0, true); 
-        }
+        if (comboCount >= 6) launchHanabi(5, 0, true);
+        else launchHanabi(3, 0, true); 
     }
 }
 
@@ -397,18 +387,14 @@ function launchHanabi(shots, type, isRandomColor) {
         if (shots > 1) x = width/2 + (i - (shots-1)/2) * (width/shots) * 0.7;
         
         let fireworkColor;
-        if (isRandomColor) {
-            fireworkColor = NEON_COLORS[floor(random(TILE_TYPES))];
-        } else {
-            fireworkColor = NEON_COLORS[type];
-        }
+        if (isRandomColor) fireworkColor = NEON_COLORS[floor(random(TILE_TYPES))];
+        else fireworkColor = NEON_COLORS[type];
         
         fireworks.push(new Firework(x, fireworkColor, scale));
     }
 }
 
 // --- クラス ---
-
 class Tile {
     constructor(r, c, type) {
         this.r = r; this.c = c; this.type = type;
@@ -436,8 +422,7 @@ class Tile {
     update() {
         if (this.state === STATE.MATCHING) { this.timer--; return this.timer <= 0; }
         if (this.state === STATE.FALLING) {
-            // ★ 変更点：落下速度を 16 から 8 に変更（ゆっくり落ちる）
-            this.yOffset += 8;
+            this.yOffset += 8; // ゆっくり落下
             if (this.yOffset >= 0) { this.yOffset = 0; this.state = STATE.STABLE; }
         }
         return false;
@@ -450,7 +435,6 @@ class Firework {
         this.col = colorObj; 
         this.scale = scale;
         this.y = UI_HEIGHT * 0.65 + 10; 
-        
         this.targetY = random(UI_HEIGHT * 0.1, UI_HEIGHT * 0.4);
         this.ascentSpeed = random(4, 7);
         this.exploded = false; this.particles = []; this.isDead = false;
@@ -469,7 +453,8 @@ class Firework {
     }
     explode() {
         this.exploded = true;
-        let count = (this.scale === "SMALL") ? 30 : (this.scale === "MEDIUM") ? 60 : 120;
+        // ★軽量化: 火の粉の数を半減させて計算負荷を抑える
+        let count = (this.scale === "SMALL") ? 15 : (this.scale === "MEDIUM") ? 30 : 60;
         for (let i = 0; i < count; i++) {
             this.particles.push(new Particle(this.x, this.y, this.col, this.scale));
         }
@@ -492,7 +477,7 @@ class Particle {
         let force = (scale === "SUPER") ? 5 : (scale === "MEDIUM") ? 3.5 : 2.5;
         this.vel = p5.Vector.random2D().mult(random(1, force));
         this.col = colorObj; 
-        this.life = 1.0; this.decay = random(0.02, 0.04);
+        this.life = 1.0; this.decay = random(0.02, 0.05); // やや早めに消えるように
     }
     update() {
         this.vel.mult(0.92);
@@ -512,7 +497,6 @@ class Particle {
 function addScore(pts) { score += pts * comboCount; }
 
 // --- 操作 ---
-
 function touchMoved() { return false; }
 
 function mousePressed() {
