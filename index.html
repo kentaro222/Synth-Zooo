@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Synth-Zooo Lite Active Walker</title>
+  <title>Synth-Zooo Lite Active Symbols</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
   <style>
     html, body {
@@ -30,12 +30,12 @@
 <body>
 <script>
 // ============================================================
-// Synth-Zooo Lite Active Walker
+// Synth-Zooo Lite Active Symbols
 // 軽量背景 + アクティブ連鎖 + 1bitキャラクター散歩版
 // - 重い背景アニメーション / 花火 / Webフォントを削除
 // - キャラクタースプライトは残す（画像が無くてもゲームは動作）
 // - pixelDensity(1)
-// - シンプルな色付き四角タイル
+// - 色に依存しない6種類の記号タイル
 // - 落下中も STABLE タイルは操作可能（アクティブ連鎖）
 // - 元版に近い消去・落下テンポ
 // - タップ + スライド/スワイプ交換
@@ -81,7 +81,7 @@ playerImage.src = 'player_1bit00_sheet.png';
 let playerX = 40;
 let playerDir = 1;
 let playerSpeed = 0.28;
-let playerPauseTimer = 90;
+let playerPauseTimer = 0;
 let playerWalkTimer = 0;
 let playerJumpTimer = 0;
 let playerJumpStrength = 0;
@@ -103,7 +103,9 @@ function setup() {
   noSmooth();
   textFont('monospace');
   buildTileImages();
-  playerX = width * 0.5;
+  playerDir = 1;
+  playerPauseTimer = 0;
+  playerX = Math.min(24, width * 0.08);
   initGrid();
 }
 
@@ -205,7 +207,10 @@ function drawHeader() {
 
   if (isPlayerReady) {
     const walking = playerPauseTimer === 0;
-    const sx = walking ? ((Math.floor(frameCount / 15) % 2) ? 16 : 0) : 0;
+    // ジャンプ中は必ず2コマ目（足が開いている絵）を使う。
+    const sx = playerJumpTimer > 0
+      ? 16
+      : (walking ? ((Math.floor(frameCount / 15) % 2) ? 16 : 0) : 0);
     const pSize = Math.min(48, UI_HEIGHT * 0.42);
 
     let jumpY = 0;
@@ -277,19 +282,42 @@ function buildTileImages() {
     g.clear();
     g.noSmooth();
 
-    const [h, s, b] = TILE_COLORS[type];
-
-    // 元版に近い、単純な色付き四角タイル。
-    // 形状差をなくし、低負荷で盤面全体を見やすくする。
-    g.fill(h, s, b, 1);
-    g.stroke(0, 0, 3, 1);
-    g.strokeWeight(6);
+    // 全タイルの地はほぼ同じ暗色にし、種類は記号だけでも判別できるようにする。
+    // 色覚に依存せず、モノクロ表示でも区別可能。
+    g.fill(235, 18, 20, 1);
+    g.stroke(0, 0, 4, 1);
+    g.strokeWeight(5);
     g.rect(10, 10, 76, 76, 4);
 
-    // 控えめなハイライトだけ残す。
-    g.noStroke();
-    g.fill(0, 0, 100, 0.28);
-    g.rect(20, 20, 14, 14, 2);
+    // 記号は太い白線で描画。フォントに依存させず、すべて図形で描く。
+    g.stroke(0, 0, 100, 1);
+    g.strokeWeight(8);
+    g.noFill();
+    const cx = 48, cy = 48;
+
+    switch (type) {
+      case 0: // circle
+        g.ellipse(cx, cy, 34, 34);
+        break;
+      case 1: // triangle
+        g.triangle(cx, 29, 29, 66, 67, 66);
+        break;
+      case 2: // diamond
+        g.quad(cx, 27, 69, cy, cx, 69, 27, cy);
+        break;
+      case 3: // plus
+        g.line(cx, 27, cx, 69);
+        g.line(27, cy, 69, cy);
+        break;
+      case 4: // X
+        g.line(30, 30, 66, 66);
+        g.line(66, 30, 30, 66);
+        break;
+      case 5: // double bar
+        g.line(31, 38, 65, 38);
+        g.line(31, 58, 65, 58);
+        break;
+    }
 
     tileImages[type] = g;
   }
