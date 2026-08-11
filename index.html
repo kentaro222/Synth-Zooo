@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Synth-Zooo Lite Active</title>
+  <title>Synth-Zooo Lite Active Walker</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
   <style>
     html, body {
@@ -30,14 +30,16 @@
 <body>
 <script>
 // ============================================================
-// Synth-Zooo Lite Active
-// 軽量背景 + 元のアクティブ連鎖感を残す版
+// Synth-Zooo Lite Active Walker
+// 軽量背景 + アクティブ連鎖 + 1bitキャラクター散歩版
 // - 重い背景アニメーション / 花火 / Webフォントを削除
 // - キャラクタースプライトは残す（画像が無くてもゲームは動作）
 // - pixelDensity(1)
 // - シンプルな色付き四角タイル
 // - 落下中も STABLE タイルは操作可能（アクティブ連鎖）
 // - 元版に近い消去・落下テンポ
+// - タップ + スライド/スワイプ交換
+// - 1bitキャラが歩く・止まる・反転・連鎖で跳ねる
 // - リサイズ対応
 // ============================================================
 
@@ -75,6 +77,15 @@ playerImage.onload = () => { isPlayerReady = true; };
 playerImage.onerror = () => { isPlayerReady = false; };
 playerImage.src = 'player_1bit00_sheet.png';
 
+// キャラクターの軽量な散歩ステート
+let playerX = 40;
+let playerDir = 1;
+let playerSpeed = 0.28;
+let playerPauseTimer = 90;
+let playerWalkTimer = 0;
+let playerJumpTimer = 0;
+let playerJumpStrength = 0;
+
 const TILE_COLORS = [
   [330, 75, 100], // pink
   [185, 75, 100], // cyan
@@ -92,6 +103,7 @@ function setup() {
   noSmooth();
   textFont('monospace');
   buildTileImages();
+  playerX = width * 0.5;
   initGrid();
 }
 
@@ -104,6 +116,7 @@ function calculateLayout() {
 function windowResized() {
   calculateLayout();
   resizeCanvas(tileSize * COLS, UI_HEIGHT + tileSize * ROWS);
+  playerX = constrain(playerX, 24, width - 24);
 }
 
 function draw() {
@@ -111,6 +124,7 @@ function draw() {
   background(236, 45, 7);
 
   updateLogic();
+  updatePlayer();
   drawHeader();
   drawUI();
 
@@ -141,26 +155,73 @@ function draw() {
   pop();
 }
 
+function updatePlayer() {
+  const pSize = Math.min(48, UI_HEIGHT * 0.42);
+  const leftEdge = pSize * 0.55;
+  const rightEdge = width - pSize * 0.55;
+
+  // 連鎖リアクション中も横移動は止めず、ジャンプだけ重ねる。
+  if (playerJumpTimer > 0) playerJumpTimer--;
+
+  if (playerPauseTimer > 0) {
+    playerPauseTimer--;
+    return;
+  }
+
+  playerX += playerDir * playerSpeed;
+  playerWalkTimer++;
+
+  if (playerX <= leftEdge) {
+    playerX = leftEdge;
+    playerDir = 1;
+    playerPauseTimer = floor(random(45, 150));
+  } else if (playerX >= rightEdge) {
+    playerX = rightEdge;
+    playerDir = -1;
+    playerPauseTimer = floor(random(45, 150));
+  } else if (playerWalkTimer > 180 && random() < 0.0025) {
+    // ときどき途中でも立ち止まる。
+    playerWalkTimer = 0;
+    playerPauseTimer = floor(random(50, 170));
+  }
+}
+
+function reactPlayerToCombo(combo) {
+  // パーティクルを使わず、キャラの上下移動だけで反応。
+  playerJumpTimer = Math.min(32, 14 + combo * 3);
+  playerJumpStrength = Math.min(12, 4 + combo * 1.25);
+}
+
 function drawHeader() {
-  // 軽量な静的ヘッダー。背景グラデーションやパーティクルは使わない。
+  // 連鎖中だけごく薄く明るくなる軽量な背景リアクション。
+  const pulse = comboCount > 1 ? Math.min(6, comboCount * 0.8) : 0;
   noStroke();
-  fill(245, 35, 10);
+  fill(245, 35, 10 + pulse);
   rect(0, 0, width, UI_HEIGHT);
 
-  // 地平線を1本だけ。雰囲気は残しつつ負荷は最小限。
-  stroke(300, 55, 38, 0.55);
+  stroke(300, 55, 38 + pulse, 0.55);
   strokeWeight(1);
   line(0, UI_HEIGHT - 16, width, UI_HEIGHT - 16);
 
-  // キャラクターは画像が読み込めた場合だけ描画。
   if (isPlayerReady) {
-    const sx = (Math.floor(frameCount / 15) % 2) ? 16 : 0;
+    const walking = playerPauseTimer === 0;
+    const sx = walking ? ((Math.floor(frameCount / 15) % 2) ? 16 : 0) : 0;
     const pSize = Math.min(48, UI_HEIGHT * 0.42);
+
+    let jumpY = 0;
+    if (playerJumpTimer > 0) {
+      const total = Math.min(32, 14 + Math.max(1, comboCount) * 3);
+      const phase = 1 - playerJumpTimer / Math.max(1, total);
+      jumpY = -Math.sin(Math.PI * phase) * playerJumpStrength;
+    }
+
     drawingContext.save();
     drawingContext.imageSmoothingEnabled = false;
+    drawingContext.translate(playerX, UI_HEIGHT - 18 - pSize / 2 + jumpY);
+    if (playerDir < 0) drawingContext.scale(-1, 1);
     drawingContext.drawImage(
       playerImage, sx, 0, 16, 16,
-      width * 0.58 - pSize / 2, UI_HEIGHT - 18 - pSize,
+      -pSize / 2, -pSize / 2,
       pSize, pSize
     );
     drawingContext.restore();
@@ -349,6 +410,7 @@ function findMatches() {
     comboCount++;
     comboTextTimer = 60;
     finalComboTimer = 0;
+    reactPlayerToCombo(comboCount);
   }
 }
 
