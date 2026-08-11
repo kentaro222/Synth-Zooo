@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Synth-Zooo Lite Active Symbols</title>
+  <title>Synth-Zooo Lite Active Colored Symbols</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
   <style>
     html, body {
@@ -30,7 +30,7 @@
 <body>
 <script>
 // ============================================================
-// Synth-Zooo Lite Active Symbols
+// Synth-Zooo Lite Active Colored Symbols
 // 軽量背景 + アクティブ連鎖 + 1bitキャラクター散歩版
 // - 重い背景アニメーション / 花火 / Webフォントを削除
 // - キャラクタースプライトは残す（画像が無くてもゲームは動作）
@@ -289,13 +289,14 @@ function buildTileImages() {
     g.strokeWeight(5);
     g.rect(10, 10, 76, 76, 4);
 
-    // 記号は太い白線で描画。フォントに依存させず、すべて図形で描く。
-    g.stroke(0, 0, 100, 1);
-    g.strokeWeight(8);
+    // 記号そのものにタイプ色を付ける。
+    // 暗い下線を一度描いてから色線を重ねることで、背景色に関係なく見やすくする。
+    const col = TILE_COLORS[type];
     g.noFill();
     const cx = 48, cy = 48;
 
-    switch (type) {
+    const drawSymbol = () => {
+      switch (type) {
       case 0: // circle
         g.ellipse(cx, cy, 34, 34);
         break;
@@ -313,11 +314,22 @@ function buildTileImages() {
         g.line(30, 30, 66, 66);
         g.line(66, 30, 30, 66);
         break;
-      case 5: // double bar
-        g.line(31, 38, 65, 38);
-        g.line(31, 58, 65, 58);
-        break;
-    }
+        case 5: // double bar
+          g.line(31, 38, 65, 38);
+          g.line(31, 58, 65, 58);
+          break;
+      }
+    };
+
+    // 輪郭（視認性確保）
+    g.stroke(0, 0, 3, 1);
+    g.strokeWeight(12);
+    drawSymbol();
+
+    // 色付き記号
+    g.stroke(col[0], col[1], col[2], 1);
+    g.strokeWeight(7);
+    drawSymbol();
 
     tileImages[type] = g;
   }
