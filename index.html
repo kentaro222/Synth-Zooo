@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Synth-Zooo Lite Active Colored Symbols</title>
+  <title>Synth-Zooo Quiet World</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
   <style>
     html, body {
@@ -30,8 +30,8 @@
 <body>
 <script>
 // ============================================================
-// Synth-Zooo Lite Active Colored Symbols
-// 軽量背景 + アクティブ連鎖 + 1bitキャラクター散歩版
+// Synth-Zooo Quiet World
+// 軽量背景 + アクティブ連鎖 + 育つ小さな世界
 // - 重い背景アニメーション / 花火 / Webフォントを削除
 // - キャラクタースプライトは残す（画像が無くてもゲームは動作）
 // - pixelDensity(1)
@@ -39,7 +39,8 @@
 // - 落下中も STABLE タイルは操作可能（アクティブ連鎖）
 // - 元版に近い消去・落下テンポ
 // - タップ + スライド/スワイプ交換
-// - 1bitキャラが歩く・止まる・反転・連鎖で跳ねる
+// - 1bitキャラが歩く・止まる・反転・連鎖数に応じて反応
+// - スコアを廃止し、内部の連鎖ポイントで背景が育つ
 // - リサイズ対応
 // ============================================================
 
@@ -60,8 +61,13 @@ let selectedTile = null;
 let startMouseX = 0;
 let startMouseY = 0;
 
-let score = 0;
 let comboCount = 0;
+// スコアの代わりに、連鎖による「世界の成長度」を内部だけで保持する。
+let worldPoints = 0;
+let worldStage = 0;
+const WORLD_THRESHOLDS = [0, 5, 15, 30, 55];
+let headerBg = null;
+
 let comboTextTimer = 0;
 let finalComboCount = 0;
 let finalComboTimer = 0;
@@ -85,6 +91,9 @@ let playerPauseTimer = 0;
 let playerWalkTimer = 0;
 let playerJumpTimer = 0;
 let playerJumpStrength = 0;
+let playerReactionTimer = 0;
+let playerReactionType = 'none';
+let playerBaseSpeed = 0.28;
 
 const TILE_COLORS = [
   [330, 75, 100], // pink
@@ -103,6 +112,7 @@ function setup() {
   noSmooth();
   textFont('monospace');
   buildTileImages();
+  rebuildHeaderBackground();
   playerDir = 1;
   playerPauseTimer = 0;
   playerX = Math.min(24, width * 0.08);
@@ -118,6 +128,7 @@ function calculateLayout() {
 function windowResized() {
   calculateLayout();
   resizeCanvas(tileSize * COLS, UI_HEIGHT + tileSize * ROWS);
+  rebuildHeaderBackground();
   playerX = constrain(playerX, 24, width - 24);
 }
 
@@ -157,20 +168,119 @@ function draw() {
   pop();
 }
 
+function getWorldStage(points) {
+  let stage = 0;
+  for (let i = 0; i < WORLD_THRESHOLDS.length; i++) {
+    if (points >= WORLD_THRESHOLDS[i]) stage = i;
+  }
+  return stage;
+}
+
+function rebuildHeaderBackground() {
+  if (width <= 0) return;
+
+  headerBg = createGraphics(width, UI_HEIGHT);
+  headerBg.pixelDensity(1);
+  headerBg.colorMode(HSB, 360, 100, 100, 1);
+  headerBg.noSmooth();
+
+  const g = headerBg;
+  const stage = worldStage;
+
+  // 毎フレーム計算せず、世界段階が変わったときだけ描き直す静的背景。
+  const skyBrightness = [8, 9, 10, 12, 15][stage];
+  g.background(225, 42, skyBrightness);
+
+  // 地面
+  g.noStroke();
+  g.fill(215, 35, 7);
+  g.rect(0, UI_HEIGHT - 24, width, 24);
+  g.stroke(185, 25, 30, 0.55);
+  g.strokeWeight(1);
+  g.line(0, UI_HEIGHT - 24, width, UI_HEIGHT - 24);
+
+  // Stage 1: 月
+  if (stage >= 1) {
+    g.noStroke();
+    g.fill(50, 18, 92, 0.9);
+    g.circle(width * 0.82, 30, 22);
+    g.fill(225, 42, skyBrightness);
+    g.circle(width * 0.86, 26, 19);
+  }
+
+  // Stage 2: 星。数を固定して軽くする。
+  if (stage >= 2) {
+    g.noStroke();
+    for (let i = 0; i < 12; i++) {
+      const x = ((i * 73 + 29) % Math.max(40, width - 30)) + 8;
+      const y = 10 + ((i * 31) % 58);
+      g.fill(55, 15, 92, 0.55 + (i % 3) * 0.15);
+      g.rect(x, y, (i % 4 === 0) ? 2 : 1, (i % 4 === 0) ? 2 : 1);
+    }
+  }
+
+  // Stage 3: 草と小さな花。単純な線だけ。
+  if (stage >= 3) {
+    g.stroke(120, 45, 28, 0.85);
+    g.strokeWeight(1);
+    for (let x = 8; x < width; x += 18) {
+      const h = 4 + ((x * 7) % 8);
+      g.line(x, UI_HEIGHT - 24, x - 2, UI_HEIGHT - 24 - h);
+      g.line(x + 2, UI_HEIGHT - 24, x + 5, UI_HEIGHT - 24 - h * 0.7);
+    }
+    g.noStroke();
+    for (let x = 22; x < width; x += 70) {
+      g.fill((x * 3) % 360, 45, 70, 0.8);
+      g.rect(x, UI_HEIGHT - 34, 2, 2);
+    }
+  }
+
+  // Stage 4: 遠くの小さな灯り。世界が少し温かくなる。
+  if (stage >= 4) {
+    g.noStroke();
+    for (let x = 18; x < width; x += 52) {
+      g.fill(40, 70, 95, 0.75);
+      g.rect(x, UI_HEIGHT - 19, 3, 3);
+      g.fill(40, 45, 65, 0.18);
+      g.rect(x - 2, UI_HEIGHT - 21, 7, 7);
+    }
+  }
+}
+
+function addWorldProgress(combo) {
+  // 連鎖が深いほど少し強く世界が育つ。表示上のスコアにはしない。
+  worldPoints += Math.max(1, combo);
+  const nextStage = getWorldStage(worldPoints);
+  if (nextStage !== worldStage) {
+    worldStage = nextStage;
+    rebuildHeaderBackground();
+    // 世界が変化した瞬間だけ、キャラも少し大きく喜ぶ。
+    playerReactionType = 'celebrate';
+    playerReactionTimer = 80;
+    playerJumpTimer = 28;
+    playerJumpStrength = 10;
+  }
+}
+
 function updatePlayer() {
   const pSize = Math.min(48, UI_HEIGHT * 0.42);
   const leftEdge = pSize * 0.55;
   const rightEdge = width - pSize * 0.55;
 
-  // 連鎖リアクション中も横移動は止めず、ジャンプだけ重ねる。
   if (playerJumpTimer > 0) playerJumpTimer--;
+  if (playerReactionTimer > 0) playerReactionTimer--;
+  else playerReactionType = 'none';
 
   if (playerPauseTimer > 0) {
     playerPauseTimer--;
     return;
   }
 
-  playerX += playerDir * playerSpeed;
+  let speed = playerBaseSpeed;
+  if (playerReactionType === 'excited') speed *= 1.8;
+  if (playerReactionType === 'celebrate') speed *= 1.35;
+
+  playerX += playerDir * speed;
   playerWalkTimer++;
 
   if (playerX <= leftEdge) {
@@ -181,33 +291,50 @@ function updatePlayer() {
     playerX = rightEdge;
     playerDir = -1;
     playerPauseTimer = floor(random(45, 150));
-  } else if (playerWalkTimer > 180 && random() < 0.0025) {
-    // ときどき途中でも立ち止まる。
+  } else if (playerWalkTimer > 180 && random() < 0.0025 && playerReactionType === 'none') {
     playerWalkTimer = 0;
     playerPauseTimer = floor(random(50, 170));
   }
 }
 
 function reactPlayerToCombo(combo) {
-  // パーティクルを使わず、キャラの上下移動だけで反応。
-  playerJumpTimer = Math.min(32, 14 + combo * 3);
-  playerJumpStrength = Math.min(12, 4 + combo * 1.25);
+  // 2コマだけでも、ジャンプ量・歩行速度・反応時間で差をつける。
+  if (combo <= 1) {
+    playerReactionType = 'notice';
+    playerReactionTimer = 24;
+    playerJumpTimer = 12;
+    playerJumpStrength = 3;
+  } else if (combo <= 3) {
+    playerReactionType = 'happy';
+    playerReactionTimer = 40;
+    playerJumpTimer = 18;
+    playerJumpStrength = 6;
+  } else if (combo <= 5) {
+    playerReactionType = 'excited';
+    playerReactionTimer = 70;
+    playerJumpTimer = 24;
+    playerJumpStrength = 9;
+  } else {
+    playerReactionType = 'celebrate';
+    playerReactionTimer = 100;
+    playerJumpTimer = 30;
+    playerJumpStrength = 12;
+  }
 }
 
 function drawHeader() {
-  // 連鎖中だけごく薄く明るくなる軽量な背景リアクション。
-  const pulse = comboCount > 1 ? Math.min(6, comboCount * 0.8) : 0;
-  noStroke();
-  fill(245, 35, 10 + pulse);
-  rect(0, 0, width, UI_HEIGHT);
+  if (headerBg) image(headerBg, 0, 0);
 
-  stroke(300, 55, 38 + pulse, 0.55);
-  strokeWeight(1);
-  line(0, UI_HEIGHT - 16, width, UI_HEIGHT - 16);
+  // 連鎖中だけ軽い明滅。大きな半透明レイヤーは使わない。
+  if (comboCount > 1) {
+    noStroke();
+    fill(55, 20, 100, Math.min(0.07, comboCount * 0.01));
+    rect(0, 0, width, UI_HEIGHT - 24);
+  }
 
   if (isPlayerReady) {
     const walking = playerPauseTimer === 0;
-    // ジャンプ中は必ず2コマ目（足が開いている絵）を使う。
+    // ジャンプ中は2コマ目（足が開いている絵）固定。
     const sx = playerJumpTimer > 0
       ? 16
       : (walking ? ((Math.floor(frameCount / 15) % 2) ? 16 : 0) : 0);
@@ -215,14 +342,19 @@ function drawHeader() {
 
     let jumpY = 0;
     if (playerJumpTimer > 0) {
-      const total = Math.min(32, 14 + Math.max(1, comboCount) * 3);
-      const phase = 1 - playerJumpTimer / Math.max(1, total);
-      jumpY = -Math.sin(Math.PI * phase) * playerJumpStrength;
+      const total = 32;
+      const phase = 1 - playerJumpTimer / total;
+      jumpY = -Math.sin(Math.PI * constrain(phase, 0, 1)) * playerJumpStrength;
+    }
+
+    // 大連鎖時はごく小さく上下に弾む。
+    if (playerReactionType === 'celebrate' && playerJumpTimer === 0) {
+      jumpY = -Math.abs(Math.sin(frameCount * 0.16)) * 2;
     }
 
     drawingContext.save();
     drawingContext.imageSmoothingEnabled = false;
-    drawingContext.translate(playerX, UI_HEIGHT - 18 - pSize / 2 + jumpY);
+    drawingContext.translate(playerX, UI_HEIGHT - 25 - pSize / 2 + jumpY);
     if (playerDir < 0) drawingContext.scale(-1, 1);
     drawingContext.drawImage(
       playerImage, sx, 0, 16, 16,
@@ -234,32 +366,27 @@ function drawHeader() {
 }
 
 function drawUI() {
-  noStroke();
-  fill(0, 0, 100);
-  textAlign(LEFT, TOP);
-  textSize(12);
-  text('SCORE', 12, 10);
-  textSize(22);
-  text(score.toLocaleString(), 12, 28);
-
+  // スコアは表示しない。プレイヤーに見せるのは現在の連鎖だけ。
   if (finalComboTimer > 0 && finalComboCount > 1) {
     textAlign(RIGHT, TOP);
-    fill(55, 80, 100);
+    noStroke();
+    fill(55, 65, 100);
     textSize(18);
-    text(finalComboCount + ' COMBO!', width - 12, 24);
+    text(finalComboCount + ' COMBO!', width - 10, 8);
     finalComboTimer--;
   } else if (comboTextTimer > 0 && comboCount > 1) {
     textAlign(RIGHT, TOP);
-    fill(0, 0, 100, 0.75);
-    textSize(16);
-    text(comboCount + ' COMBO', width - 12, 26);
+    noStroke();
+    fill(0, 0, 100, 0.72);
+    textSize(15);
+    text(comboCount + ' COMBO', width - 10, 9);
     comboTextTimer--;
   }
 }
 
 function drawBoardBackground() {
   noStroke();
-  fill(236, 35, 11);
+  fill(225 + worldStage * 2, 30, 10 + worldStage * 0.8);
   rect(0, 0, width, ROWS * tileSize);
 
   stroke(0, 0, 100, 0.055);
@@ -345,7 +472,6 @@ function updateLogic() {
       if (t.state !== STATE.STABLE) isBusy = true;
       if (t.update()) {
         grid[r][c] = null;
-        addScore(100);
       }
     }
   }
@@ -450,6 +576,7 @@ function findMatches() {
     comboCount++;
     comboTextTimer = 60;
     finalComboTimer = 0;
+    addWorldProgress(comboCount);
     reactPlayerToCombo(comboCount);
   }
 }
@@ -534,10 +661,6 @@ class Tile {
 
     return false;
   }
-}
-
-function addScore(pts) {
-  score += pts * Math.max(1, comboCount);
 }
 
 function touchMoved() {
@@ -673,7 +796,9 @@ function shuffleBoard() {
 
 function initGrid() {
   shuffleBoard();
-  score = 0;
+  worldPoints = 0;
+  worldStage = 0;
+  rebuildHeaderBackground();
   comboCount = 0;
 }
 </script>
