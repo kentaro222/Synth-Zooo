@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Synth-Zooo Slow World v1</title>
+  <title>Synth-Zooo Ambient</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
   <style>
     html, body {
       margin: 0;
       width: 100%;
       height: 100%;
-      background: #080914;
+      background: #070912;
       overflow: hidden;
       touch-action: none;
       user-select: none;
@@ -30,18 +30,12 @@
 <body>
 <script>
 // ============================================================
-// Synth-Zooo Slow World
-// 軽量背景 + アクティブ連鎖 + 育つ小さな世界
-// - 重い背景アニメーション / 花火 / Webフォントを削除
-// - キャラクタースプライトは残す（画像が無くてもゲームは動作）
-// - pixelDensity(1)
-// - 色に依存しない6種類の記号タイル
-// - 落下中も STABLE タイルは操作可能（アクティブ連鎖）
-// - 元版に近い消去・落下テンポ
-// - タップ + スライド/スワイプ交換
-// - 1bitキャラが歩く・止まる・反転・連鎖数に応じて反応
-// - スコアを廃止し、深い連鎖ほど背景がゆっくり育つ（24段階）
-// - リサイズ対応
+// Synth-Zooo Ambient
+// - 軽量なアクティブ連鎖パズル
+// - 記号＋色タイル
+// - 1bitキャラは連鎖と連動せず、静かに歩く
+// - 背景は明確な景色を持たない抽象的アンビエント演出
+// - 背景は時間とともにゆっくり循環し、連鎖時だけ柔らかく明るくなる
 // ============================================================
 
 const COLS = 8;
@@ -62,51 +56,41 @@ let startMouseX = 0;
 let startMouseY = 0;
 
 let comboCount = 0;
-// スコアの代わりに、連鎖による「世界の成長度」を内部だけで保持する。
-let worldPoints = 0;
-let worldStage = 0;
-// 24段階の小さな変化。最終段階まで約120成長ポイント。
-// 序盤は少し動きが見え、後半ほど間隔が広がる。
-const WORLD_THRESHOLDS = [
-  0, 2, 4, 7, 11, 14, 18, 23, 27, 32, 37, 42, 47,
-  52, 58, 64, 69, 75, 81, 88, 94, 100, 107, 113, 120
-];
-let headerBg = null;
-
 let comboTextTimer = 0;
 let finalComboCount = 0;
 let finalComboTimer = 0;
 let chainGraceTimer = -1;
 
 let messageTimer = 0;
-let messageText = "NO MORE MOVES";
+let messageText = 'NO MORE MOVES';
 
-// キャラクター（元版と同じ2フレームのスプライトシート）
+// subtle ambient pulse driven by play, but not progression
+let ambientPulse = 0;
+let ambientPulseTarget = 0;
+
 const playerImage = new Image();
 let isPlayerReady = false;
 playerImage.onload = () => { isPlayerReady = true; };
 playerImage.onerror = () => { isPlayerReady = false; };
 playerImage.src = 'player_1bit00_sheet.png';
 
-// キャラクターの軽量な散歩ステート
 let playerX = 40;
 let playerDir = 1;
-let playerSpeed = 0.28;
+let playerBaseSpeed = 0.28;
 let playerPauseTimer = 0;
 let playerWalkTimer = 0;
-let playerJumpTimer = 0;
-let playerJumpStrength = 0;
-let playerReactionTimer = 0;
-let playerReactionType = 'none';
-let playerBaseSpeed = 0.28;
+let playerIdleLookTimer = 0;
+
+let ambientLayers = [];
+let ambientSpecks = [];
 
 const TILE_COLORS = [
-  [330, 75, 100], // pink
-  [185, 75, 100], // cyan
-  [55,  80, 100], // yellow
-  [125, 70, 95],  // green
-  [25,  85, 100], // orange
-  [265, 60, 100]  // violet
+  [330, 75, 100],
+  [185, 75, 100],
+  [55,  80, 100],
+  [125, 70, 95],
+  [25,  85, 100],
+  [265, 60, 100]
 ];
 
 function setup() {
@@ -116,11 +100,12 @@ function setup() {
   colorMode(HSB, 360, 100, 100, 1);
   noSmooth();
   textFont('monospace');
+
   buildTileImages();
-  rebuildHeaderBackground();
+  rebuildAmbientLayers();
+
+  playerX = 24;
   playerDir = 1;
-  playerPauseTimer = 0;
-  playerX = Math.min(24, width * 0.08);
   initGrid();
 }
 
@@ -133,16 +118,57 @@ function calculateLayout() {
 function windowResized() {
   calculateLayout();
   resizeCanvas(tileSize * COLS, UI_HEIGHT + tileSize * ROWS);
-  rebuildHeaderBackground();
+  rebuildAmbientLayers();
   playerX = constrain(playerX, 24, width - 24);
 }
 
+function rebuildAmbientLayers() {
+  ambientLayers = [];
+  const layerPalettes = [
+    { hue: 215, sat: 30, bri: 18, alpha: 0.18 },
+    { hue: 248, sat: 24, bri: 24, alpha: 0.16 },
+    { hue: 188, sat: 20, bri: 20, alpha: 0.12 }
+  ];
+
+  for (let i = 0; i < layerPalettes.length; i++) {
+    const pal = layerPalettes[i];
+    const g = createGraphics(width, UI_HEIGHT);
+    g.pixelDensity(1);
+    g.colorMode(HSB, 360, 100, 100, 1);
+    g.clear();
+    g.noStroke();
+
+    // 抽象的な大きい光の塊。輪郭をはっきりさせないため楕円を重ねる。
+    for (let j = 0; j < 6; j++) {
+      const x = ((j * 79 + i * 47) % Math.max(50, width - 20)) + 10;
+      const y = 10 + ((j * 29 + i * 13) % Math.max(20, UI_HEIGHT - 40));
+      const w = 48 + ((j * 37 + i * 11) % 70);
+      const h = 28 + ((j * 19 + i * 7) % 44);
+      g.fill((pal.hue + j * 6) % 360, pal.sat, pal.bri, pal.alpha * (0.7 + (j % 3) * 0.25));
+      g.ellipse(x, y, w, h);
+    }
+
+    ambientLayers.push(g);
+  }
+
+  ambientSpecks = [];
+  for (let i = 0; i < 9; i++) {
+    ambientSpecks.push({
+      x: ((i * 61 + 17) % Math.max(30, width - 10)) + 5,
+      y: 10 + ((i * 17 + 9) % Math.max(18, UI_HEIGHT - 30)),
+      phase: i * 0.7,
+      size: (i % 3) + 1
+    });
+  }
+}
+
 function draw() {
-  // 静的背景。毎フレームのグラデーションや星・山などは描かない。
-  background(236, 45, 7);
+  background(232, 38, 7);
 
   updateLogic();
+  updateAmbient();
   updatePlayer();
+
   drawHeader();
   drawUI();
 
@@ -173,232 +199,92 @@ function draw() {
   pop();
 }
 
-function getWorldStage(points) {
-  let stage = 0;
-  for (let i = 0; i < WORLD_THRESHOLDS.length; i++) {
-    if (points >= WORLD_THRESHOLDS[i]) stage = i;
-  }
-  return stage;
+function updateAmbient() {
+  ambientPulseTarget *= 0.94;
+  ambientPulse = lerp(ambientPulse, ambientPulseTarget, 0.08);
 }
 
-function rebuildHeaderBackground() {
-  if (width <= 0) return;
-
-  headerBg = createGraphics(width, UI_HEIGHT);
-  headerBg.pixelDensity(1);
-  headerBg.colorMode(HSB, 360, 100, 100, 1);
-  headerBg.noSmooth();
-
-  const g = headerBg;
-  const stage = worldStage;
-  const progress = stage / (WORLD_THRESHOLDS.length - 1);
-
-  // 背景は段階が変わった時だけ描き直す。毎フレームの重い処理はしない。
-  const skyHue = 225 - progress * 12;
-  const skyBrightness = 7 + progress * 10;
-  g.background(skyHue, 40, skyBrightness);
-
-  // 遠景。少しずつ輪郭が増える。
-  if (stage >= 4) {
-    g.noStroke();
-    g.fill(220, 28, 9 + progress * 7);
-    const hillCount = 1 + Math.floor((stage - 4) / 6);
-    for (let i = 0; i < hillCount; i++) {
-      const x = width * (0.15 + i * 0.33);
-      const w = width * 0.42;
-      const h = 10 + i * 4;
-      g.triangle(x - w / 2, UI_HEIGHT - 24, x, UI_HEIGHT - 24 - h, x + w / 2, UI_HEIGHT - 24);
-    }
-  }
-
-  // 地面
-  g.noStroke();
-  g.fill(212, 32, 7 + progress * 4);
-  g.rect(0, UI_HEIGHT - 24, width, 24);
-  g.stroke(185, 22, 25 + progress * 12, 0.55);
-  g.strokeWeight(1);
-  g.line(0, UI_HEIGHT - 24, width, UI_HEIGHT - 24);
-
-  // 月：早い段階で現れ、その後少しずつ存在感が増す。
-  if (stage >= 2) {
-    const moonGrowth = constrain((stage - 2) / 10, 0, 1);
-    const moonSize = 12 + moonGrowth * 12;
-    g.noStroke();
-    g.fill(50, 12, 78 + moonGrowth * 17, 0.9);
-    g.circle(width * 0.82, 29, moonSize);
-    g.fill(skyHue, 40, skyBrightness);
-    const cut = moonSize * (0.55 - moonGrowth * 0.18);
-    g.circle(width * 0.82 + cut, 26, moonSize * 0.88);
-  }
-
-  // 星：1段階につき少しずつ増える。最大18個。
-  const starCount = Math.min(18, Math.max(0, stage - 1));
-  if (starCount > 0) {
-    g.noStroke();
-    for (let i = 0; i < starCount; i++) {
-      const x = ((i * 73 + 29) % Math.max(40, width - 34)) + 8;
-      const y = 9 + ((i * 31) % 61);
-      g.fill(55, 12, 88, 0.45 + (i % 3) * 0.14);
-      const sz = (i % 5 === 0) ? 2 : 1;
-      g.rect(x, y, sz, sz);
-    }
-  }
-
-  // 草：中盤から1～2本ずつ増える。
-  const grassCount = stage >= 7 ? Math.min(22, 3 + (stage - 7) * 2) : 0;
-  if (grassCount > 0) {
-    g.stroke(118, 42, 25 + progress * 15, 0.82);
-    g.strokeWeight(1);
-    for (let i = 0; i < grassCount; i++) {
-      const x = 7 + ((i * 29 + 11) % Math.max(20, width - 14));
-      const h = 4 + ((i * 7) % 8);
-      g.line(x, UI_HEIGHT - 24, x - 2, UI_HEIGHT - 24 - h);
-      if (i % 2 === 0) g.line(x + 1, UI_HEIGHT - 24, x + 4, UI_HEIGHT - 24 - h * 0.65);
-    }
-  }
-
-  // 花：後半から少しずつ。点だけなので非常に軽い。
-  const flowerCount = stage >= 13 ? Math.min(8, 1 + Math.floor((stage - 13) / 2)) : 0;
-  if (flowerCount > 0) {
-    g.noStroke();
-    for (let i = 0; i < flowerCount; i++) {
-      const x = 20 + ((i * 67 + 13) % Math.max(30, width - 40));
-      g.fill((20 + i * 47) % 360, 48, 72, 0.82);
-      g.rect(x, UI_HEIGHT - 33 - (i % 3), 2, 2);
-    }
-  }
-
-  // 遠くの灯り：終盤のご褒美。1個ずつ増える。
-  const lightCount = stage >= 18 ? Math.min(7, stage - 17) : 0;
-  if (lightCount > 0) {
-    g.noStroke();
-    for (let i = 0; i < lightCount; i++) {
-      const x = 16 + ((i * 53 + 5) % Math.max(30, width - 28));
-      g.fill(40, 65, 95, 0.72);
-      g.rect(x, UI_HEIGHT - 19, 3, 3);
-      g.fill(40, 38, 65, 0.14);
-      g.rect(x - 2, UI_HEIGHT - 21, 7, 7);
-    }
-  }
-}
-function addWorldProgress(combo) {
-  // 「ただ1回消した」だけでは世界はほぼ進まない。
-  // アクティブ連鎖が深いほど、成長が目に見えて速くなる。
-  let gain = 0;
-  if (combo === 2) gain = 1;
-  else if (combo === 3) gain = 2;
-  else if (combo === 4) gain = 4;
-  else if (combo === 5) gain = 6;
-  else if (combo >= 6) gain = 8 + (combo - 6) * 2;
-
-  if (gain <= 0) return;
-
-  worldPoints += gain;
-  const nextStage = getWorldStage(worldPoints);
-  if (nextStage !== worldStage) {
-    worldStage = nextStage;
-    rebuildHeaderBackground();
-
-    // 世界が変化した瞬間だけ、キャラも少し大きく喜ぶ。
-    playerReactionType = 'celebrate';
-    playerReactionTimer = 80;
-    playerJumpTimer = 28;
-    playerJumpStrength = 10;
-  }
-}
 function updatePlayer() {
   const pSize = Math.min(48, UI_HEIGHT * 0.42);
   const leftEdge = pSize * 0.55;
   const rightEdge = width - pSize * 0.55;
 
-  if (playerJumpTimer > 0) playerJumpTimer--;
-  if (playerReactionTimer > 0) playerReactionTimer--;
-  else playerReactionType = 'none';
+  if (playerIdleLookTimer > 0) playerIdleLookTimer--;
 
   if (playerPauseTimer > 0) {
     playerPauseTimer--;
+    if (playerPauseTimer === 0 && random() < 0.35) playerIdleLookTimer = floor(random(20, 50));
     return;
   }
 
-  let speed = playerBaseSpeed;
-  if (playerReactionType === 'excited') speed *= 1.8;
-  if (playerReactionType === 'celebrate') speed *= 1.35;
-
-  playerX += playerDir * speed;
+  playerX += playerDir * playerBaseSpeed;
   playerWalkTimer++;
 
   if (playerX <= leftEdge) {
     playerX = leftEdge;
     playerDir = 1;
-    playerPauseTimer = floor(random(45, 150));
+    playerPauseTimer = floor(random(50, 170));
   } else if (playerX >= rightEdge) {
     playerX = rightEdge;
     playerDir = -1;
-    playerPauseTimer = floor(random(45, 150));
-  } else if (playerWalkTimer > 180 && random() < 0.0025 && playerReactionType === 'none') {
-    playerWalkTimer = 0;
     playerPauseTimer = floor(random(50, 170));
-  }
-}
-
-function reactPlayerToCombo(combo) {
-  // 2コマだけでも、ジャンプ量・歩行速度・反応時間で差をつける。
-  if (combo <= 1) {
-    playerReactionType = 'notice';
-    playerReactionTimer = 24;
-    playerJumpTimer = 12;
-    playerJumpStrength = 3;
-  } else if (combo <= 3) {
-    playerReactionType = 'happy';
-    playerReactionTimer = 40;
-    playerJumpTimer = 18;
-    playerJumpStrength = 6;
-  } else if (combo <= 5) {
-    playerReactionType = 'excited';
-    playerReactionTimer = 70;
-    playerJumpTimer = 24;
-    playerJumpStrength = 9;
-  } else {
-    playerReactionType = 'celebrate';
-    playerReactionTimer = 100;
-    playerJumpTimer = 30;
-    playerJumpStrength = 12;
+  } else if (playerWalkTimer > 180 && random() < 0.0025) {
+    playerWalkTimer = 0;
+    playerPauseTimer = floor(random(40, 130));
   }
 }
 
 function drawHeader() {
-  if (headerBg) image(headerBg, 0, 0);
+  const t = frameCount * 0.0032;
+  const pulse = ambientPulse;
 
-  // 連鎖中だけ軽い明滅。大きな半透明レイヤーは使わない。
-  if (comboCount > 1) {
-    noStroke();
-    fill(55, 20, 100, Math.min(0.07, comboCount * 0.01));
-    rect(0, 0, width, UI_HEIGHT - 24);
+  // ゆっくり循環する抽象背景。
+  const baseHue = 220 + sin(t * 0.9) * 10 + pulse * 6;
+  const upperHue = 246 + sin(t * 0.6 + 1.2) * 12 + pulse * 8;
+  const lowerHue = 196 + sin(t * 0.7 + 3.1) * 8 + pulse * 4;
+
+  noStroke();
+  for (let y = 0; y < UI_HEIGHT; y += 2) {
+    const k = y / max(1, UI_HEIGHT - 1);
+    const h = lerp(upperHue, lowerHue, k);
+    const s = lerp(28, 18, k);
+    const b = lerp(13 + pulse * 9, 9 + pulse * 5, k);
+    fill((h + 360) % 360, s, b, 1);
+    rect(0, y, width, 2);
   }
+
+  // 静かな光のレイヤー。
+  for (let i = 0; i < ambientLayers.length; i++) {
+    const xoff = sin(t * (0.7 + i * 0.17) + i * 1.1) * (6 + i * 3);
+    const yoff = cos(t * (0.5 + i * 0.11) + i * 0.8) * (3 + i * 1.5);
+    const alpha = 140 + sin(t * (0.8 + i * 0.15) + i) * 30 + pulse * 70;
+    tint(255, alpha);
+    image(ambientLayers[i], xoff, yoff);
+    noTint();
+  }
+
+  // ごく淡い光点。具体物にならない程度に少数。
+  for (const s of ambientSpecks) {
+    const tw = 0.35 + 0.25 * sin(t * 3.2 + s.phase) + pulse * 0.18;
+    fill(55, 10, 85, max(0, tw));
+    rect(s.x + sin(t + s.phase) * 1.5, s.y + cos(t * 0.8 + s.phase) * 1.5, s.size, s.size);
+  }
+
+  // キャラのための非常に細い足場線。
+  stroke(200, 20, 28, 0.35 + pulse * 0.12);
+  strokeWeight(1);
+  line(0, UI_HEIGHT - 24, width, UI_HEIGHT - 24);
 
   if (isPlayerReady) {
     const walking = playerPauseTimer === 0;
-    // ジャンプ中は2コマ目（足が開いている絵）固定。
-    const sx = playerJumpTimer > 0
-      ? 16
-      : (walking ? ((Math.floor(frameCount / 15) % 2) ? 16 : 0) : 0);
+    const sx = walking ? ((Math.floor(frameCount / 15) % 2) ? 16 : 0) : 0;
     const pSize = Math.min(48, UI_HEIGHT * 0.42);
-
-    let jumpY = 0;
-    if (playerJumpTimer > 0) {
-      const total = 32;
-      const phase = 1 - playerJumpTimer / total;
-      jumpY = -Math.sin(Math.PI * constrain(phase, 0, 1)) * playerJumpStrength;
-    }
-
-    // 大連鎖時はごく小さく上下に弾む。
-    if (playerReactionType === 'celebrate' && playerJumpTimer === 0) {
-      jumpY = -Math.abs(Math.sin(frameCount * 0.16)) * 2;
-    }
+    const bob = walking ? -Math.abs(Math.sin(frameCount * 0.12)) * 1.2 : 0;
+    const lookLift = playerIdleLookTimer > 0 ? -1.5 : 0;
 
     drawingContext.save();
     drawingContext.imageSmoothingEnabled = false;
-    drawingContext.translate(playerX, UI_HEIGHT - 25 - pSize / 2 + jumpY);
+    drawingContext.translate(playerX, UI_HEIGHT - 25 - pSize / 2 + bob + lookLift);
     if (playerDir < 0) drawingContext.scale(-1, 1);
     drawingContext.drawImage(
       playerImage, sx, 0, 16, 16,
@@ -410,18 +296,17 @@ function drawHeader() {
 }
 
 function drawUI() {
-  // スコアは表示しない。プレイヤーに見せるのは現在の連鎖だけ。
   if (finalComboTimer > 0 && finalComboCount > 1) {
     textAlign(RIGHT, TOP);
     noStroke();
-    fill(55, 65, 100);
+    fill(55, 30, 100, 0.92);
     textSize(18);
     text(finalComboCount + ' COMBO!', width - 10, 8);
     finalComboTimer--;
   } else if (comboTextTimer > 0 && comboCount > 1) {
     textAlign(RIGHT, TOP);
     noStroke();
-    fill(0, 0, 100, 0.72);
+    fill(0, 0, 100, 0.68);
     textSize(15);
     text(comboCount + ' COMBO', width - 10, 9);
     comboTextTimer--;
@@ -430,18 +315,14 @@ function drawUI() {
 
 function drawBoardBackground() {
   noStroke();
-  const boardGrowth = worldStage / (WORLD_THRESHOLDS.length - 1);
-  fill(225 + boardGrowth * 8, 30, 10 + boardGrowth * 5);
+  const pulse = ambientPulse;
+  fill(226 + pulse * 4, 28, 10 + pulse * 3);
   rect(0, 0, width, ROWS * tileSize);
 
-  stroke(0, 0, 100, 0.055);
+  stroke(0, 0, 100, 0.05);
   strokeWeight(1);
-  for (let r = 0; r <= ROWS; r++) {
-    line(0, r * tileSize, width, r * tileSize);
-  }
-  for (let c = 0; c <= COLS; c++) {
-    line(c * tileSize, 0, c * tileSize, ROWS * tileSize);
-  }
+  for (let r = 0; r <= ROWS; r++) line(0, r * tileSize, width, r * tileSize);
+  for (let c = 0; c <= COLS; c++) line(c * tileSize, 0, c * tileSize, ROWS * tileSize);
 }
 
 function buildTileImages() {
@@ -454,51 +335,45 @@ function buildTileImages() {
     g.clear();
     g.noSmooth();
 
-    // 全タイルの地はほぼ同じ暗色にし、種類は記号だけでも判別できるようにする。
-    // 色覚に依存せず、モノクロ表示でも区別可能。
     g.fill(235, 18, 20, 1);
     g.stroke(0, 0, 4, 1);
     g.strokeWeight(5);
     g.rect(10, 10, 76, 76, 4);
 
-    // 記号そのものにタイプ色を付ける。
-    // 暗い下線を一度描いてから色線を重ねることで、背景色に関係なく見やすくする。
     const col = TILE_COLORS[type];
     g.noFill();
     const cx = 48, cy = 48;
 
     const drawSymbol = () => {
       switch (type) {
-      case 0: // circle
-        g.ellipse(cx, cy, 34, 34);
-        break;
-      case 1: // triangle
-        g.triangle(cx, 29, 29, 66, 67, 66);
-        break;
-      case 2: // diamond
-        g.quad(cx, 27, 69, cy, cx, 69, 27, cy);
-        break;
-      case 3: // plus
-        g.line(cx, 27, cx, 69);
-        g.line(27, cy, 69, cy);
-        break;
-      case 4: // X
-        g.line(30, 30, 66, 66);
-        g.line(66, 30, 30, 66);
-        break;
-        case 5: // double bar
+        case 0:
+          g.ellipse(cx, cy, 34, 34);
+          break;
+        case 1:
+          g.triangle(cx, 29, 29, 66, 67, 66);
+          break;
+        case 2:
+          g.quad(cx, 27, 69, cy, cx, 69, 27, cy);
+          break;
+        case 3:
+          g.line(cx, 27, cx, 69);
+          g.line(27, cy, 69, cy);
+          break;
+        case 4:
+          g.line(30, 30, 66, 66);
+          g.line(66, 30, 30, 66);
+          break;
+        case 5:
           g.line(31, 38, 65, 38);
           g.line(31, 58, 65, 58);
           break;
       }
     };
 
-    // 輪郭（視認性確保）
     g.stroke(0, 0, 3, 1);
     g.strokeWeight(12);
     drawSymbol();
 
-    // 色付き記号
     g.stroke(col[0], col[1], col[2], 1);
     g.strokeWeight(7);
     drawSymbol();
@@ -515,13 +390,10 @@ function updateLogic() {
       const t = grid[r][c];
       if (!t) continue;
       if (t.state !== STATE.STABLE) isBusy = true;
-      if (t.update()) {
-        grid[r][c] = null;
-      }
+      if (t.update()) grid[r][c] = null;
     }
   }
 
-  // 空きマスへ落下・新規生成
   for (let c = 0; c < COLS; c++) {
     for (let r = ROWS - 1; r >= 0; r--) {
       if (grid[r][c] !== null) continue;
@@ -581,9 +453,7 @@ function findMatches() {
       const t2 = grid[r][c + 1];
       const t3 = grid[r][c + 2];
       if (t1 && t2 && t3 && [t1, t2, t3].every(t => t.state === STATE.STABLE)) {
-        if (t1.type === t2.type && t1.type === t3.type) {
-          matches.push({ tiles: [t1, t2, t3] });
-        }
+        if (t1.type === t2.type && t1.type === t3.type) matches.push({ tiles: [t1, t2, t3] });
       }
     }
   }
@@ -594,9 +464,7 @@ function findMatches() {
       const t2 = grid[r + 1][c];
       const t3 = grid[r + 2][c];
       if (t1 && t2 && t3 && [t1, t2, t3].every(t => t.state === STATE.STABLE)) {
-        if (t1.type === t2.type && t1.type === t3.type) {
-          matches.push({ tiles: [t1, t2, t3] });
-        }
+        if (t1.type === t2.type && t1.type === t3.type) matches.push({ tiles: [t1, t2, t3] });
       }
     }
   }
@@ -604,7 +472,6 @@ function findMatches() {
   if (matches.length === 0) return;
 
   let firstMatchInThisStep = false;
-
   for (const m of matches) {
     let isNew = false;
     for (const t of m.tiles) {
@@ -621,8 +488,9 @@ function findMatches() {
     comboCount++;
     comboTextTimer = 60;
     finalComboTimer = 0;
-    addWorldProgress(comboCount);
-    reactPlayerToCombo(comboCount);
+
+    // 背景は連鎖数に応じて少しだけ明るくなるが、成長や完成はしない。
+    ambientPulseTarget = max(ambientPulseTarget, min(0.8, 0.12 + comboCount * 0.08));
   }
 }
 
@@ -716,7 +584,6 @@ function mousePressed() {
   if (messageTimer > 0) return;
 
   finalComboTimer = 0;
-
   const c = floor(mouseX / tileSize);
   const r = floor((mouseY - UI_HEIGHT) / tileSize);
 
@@ -759,11 +626,8 @@ function mouseReleased() {
     let r2 = dragStart.r;
     let c2 = dragStart.c;
 
-    if (abs(dx) > abs(dy)) {
-      c2 += dx > 0 ? 1 : -1;
-    } else {
-      r2 += dy > 0 ? 1 : -1;
-    }
+    if (abs(dx) > abs(dy)) c2 += dx > 0 ? 1 : -1;
+    else r2 += dy > 0 ? 1 : -1;
 
     trySwap(dragStart.r, dragStart.c, r2, c2);
     selectedTile = null;
@@ -820,14 +684,12 @@ function shuffleBoard() {
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     grid = [];
-
     for (let r = 0; r < ROWS; r++) {
       grid[r] = [];
       for (let c = 0; c < COLS; c++) {
         grid[r][c] = new Tile(r, c, floor(random(TILE_TYPES)));
       }
     }
-
     if (!checkMatchesOnBoard() && hasPossibleMoves()) {
       selectedTile = null;
       dragStart = null;
@@ -835,16 +697,14 @@ function shuffleBoard() {
     }
   }
 
-  // 念のため。通常ここには来ない。
   console.warn('Board generation reached maximum attempts.');
 }
 
 function initGrid() {
   shuffleBoard();
-  worldPoints = 0;
-  worldStage = 0;
-  rebuildHeaderBackground();
   comboCount = 0;
+  ambientPulse = 0;
+  ambientPulseTarget = 0;
 }
 </script>
 </body>
